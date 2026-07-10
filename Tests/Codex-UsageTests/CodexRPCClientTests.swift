@@ -99,4 +99,27 @@ final class CodexRPCClientTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - extractResponseLine
+
+    func testExtractResponseLineFindsMatchingId() {
+        let output = """
+        {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"codex","version":"1.0.0"}}}
+        {"jsonrpc":"2.0","id":1,"result":{"rate_limits":{"primary":{"used_percent":10.0,"window_duration_mins":300,"resets_at":1752158400},"secondary":{"used_percent":30.0,"window_duration_mins":10080,"resets_at":1752441600}}}}
+        """.data(using: .utf8)!
+
+        let line = client.extractResponseLine(for: 1, from: output)
+        XCTAssertNotNil(line)
+        XCTAssertTrue(String(data: line!, encoding: .utf8)!.contains("rate_limits"))
+    }
+
+    func testExtractResponseLineReturnsNilForMissingId() {
+        let output = """
+        {"jsonrpc":"2.0","id":0,"result":{"protocolVersion":"2024-11-05"}}
+        {"jsonrpc":"2.0","method":"notifications/progress"}
+        """.data(using: .utf8)!
+
+        let line = client.extractResponseLine(for: 99, from: output)
+        XCTAssertNil(line)
+    }
 }
