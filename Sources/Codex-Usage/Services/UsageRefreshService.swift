@@ -7,16 +7,17 @@ final class UsageRefreshService: ObservableObject {
     @Published private(set) var error: UsageError?
     @Published private(set) var isLoading: Bool = false
     
-    private let rpcClient: CodexRPCClient
+    private let rpcClient: CodexRPCClientProtocol
     private var timer: Timer?
     private let refreshInterval: TimeInterval
     
-    init(rpcClient: CodexRPCClient = CodexRPCClient(), refreshInterval: TimeInterval = 60) {
+    init(rpcClient: CodexRPCClientProtocol = CodexRPCClient(), refreshInterval: TimeInterval = 60) {
         self.rpcClient = rpcClient
         self.refreshInterval = refreshInterval
     }
     
     func start() {
+        guard timer == nil else { return }
         Task {
             await refresh()
         }
@@ -39,7 +40,6 @@ final class UsageRefreshService: ObservableObject {
         do {
             let newSnapshot = try await rpcClient.fetchUsage()
             snapshot = newSnapshot
-            error = nil
         } catch let usageError as UsageError {
             error = usageError
         } catch {

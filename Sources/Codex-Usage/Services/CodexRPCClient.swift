@@ -50,7 +50,11 @@ struct RPCRateLimitsResponse: Codable {
     let rateLimits: RateLimits
 }
 
-actor CodexRPCClient {
+protocol CodexRPCClientProtocol: Sendable {
+    func fetchUsage() async throws -> UsageSnapshot
+}
+
+actor CodexRPCClient: CodexRPCClientProtocol {
     private let executor: CodexCLIExecutor
     private var currentProcess: Process?
 
