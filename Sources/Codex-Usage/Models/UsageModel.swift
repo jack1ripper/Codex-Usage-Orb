@@ -4,13 +4,19 @@ struct UsageWindow: Codable, Equatable, Sendable {
     let usedPercent: Double
     let windowMinutes: Int?
     let resetsAt: Date?
-    
+
     var remainingPercent: Double {
-        max(0, 100 - usedPercent)
+        min(max(0, 100 - usedPercent), 100)
     }
-    
+
     var remainingRatio: Double {
-        remainingPercent / 100
+        min(1, max(0, remainingPercent / 100))
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case usedPercent
+        case windowMinutes = "window_duration_mins"
+        case resetsAt = "resets_at"
     }
 }
 
