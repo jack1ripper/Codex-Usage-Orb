@@ -1,3 +1,8 @@
-import Foundation
+import AppKit
 
-print("Codex-Usage initialized")
+autoreleasepool {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.run()
+}
