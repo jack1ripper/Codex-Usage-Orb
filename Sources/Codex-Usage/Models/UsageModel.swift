@@ -31,4 +31,5 @@ enum UsageError: Error, Equatable, Sendable {
     case notAuthenticated
     case rpcFailed(String)
     case decodeFailed(String)
+    case incompatibleResponse(String)
 }

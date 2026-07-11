@@ -70,20 +70,21 @@ struct UsagePopoverView: View {
             .frame(maxWidth: .infinity, minHeight: 126)
 
         case .error(let error):
+            let presentation = UsageErrorPresentation(error: error)
             VStack(spacing: 9) {
-                Image(systemName: errorIcon(for: error))
+                Image(systemName: presentation.systemImageName)
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.orange)
 
-                Text(errorTitle(for: error))
+                Text(presentation.title)
                     .font(.system(size: 14, weight: .semibold))
 
-                Text(errorMessage(for: error))
+                Text(presentation.message)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                if canRetry(error) {
+                if presentation.canRetry {
                     Button("重试", action: onRefresh)
                         .controlSize(.small)
                 }
@@ -118,47 +119,6 @@ struct UsagePopoverView: View {
         }
     }
 
-    private func canRetry(_ error: UsageError) -> Bool {
-        switch error {
-        case .rpcFailed, .decodeFailed:
-            return true
-        case .cliNotFound, .notAuthenticated:
-            return false
-        }
-    }
-
-    private func errorIcon(for error: UsageError) -> String {
-        switch error {
-        case .cliNotFound:
-            return "terminal"
-        case .notAuthenticated:
-            return "person.crop.circle.badge.xmark"
-        case .rpcFailed, .decodeFailed:
-            return "exclamationmark.triangle"
-        }
-    }
-
-    private func errorTitle(for error: UsageError) -> String {
-        switch error {
-        case .cliNotFound:
-            return "未找到 Codex CLI"
-        case .notAuthenticated:
-            return "Codex CLI 尚未登录"
-        case .rpcFailed, .decodeFailed:
-            return "暂时无法获取用量"
-        }
-    }
-
-    private func errorMessage(for error: UsageError) -> String {
-        switch error {
-        case .cliNotFound:
-            return "请在设置中选择 Codex CLI 的路径。"
-        case .notAuthenticated:
-            return "请先在终端运行 codex login。"
-        case .rpcFailed, .decodeFailed:
-            return "请检查网络或稍后重试。"
-        }
-    }
 }
 
 #if DEBUG

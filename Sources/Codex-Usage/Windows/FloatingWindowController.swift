@@ -5,6 +5,7 @@ import SwiftUI
 final class FloatingWindowController: NSObject, NSWindowDelegate {
     private let service: UsageRefreshService
     private var window: NSPanel?
+    private var isCreatingWindow = false
     private var settingsWindow: NSWindow?
     private var settingsWindowDelegate: SettingsWindowDelegate?
 
@@ -43,6 +44,9 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
             window.orderFrontRegardless()
             return
         }
+        guard !isCreatingWindow else { return }
+        isCreatingWindow = true
+        defer { isCreatingWindow = false }
 
         let size = currentWindowSize
         let panel = NSPanel(
@@ -153,16 +157,14 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
 
         let delegate = SettingsWindowDelegate(controller: self)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 400),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "设置"
         window.appearance = NSAppearance(named: .aqua)
-        window.contentView = NSHostingView(rootView: SettingsView(onSave: { [weak self] in
-            self?.hideSettings()
-        }))
+        window.contentView = NSHostingView(rootView: SettingsView())
         window.center()
         window.delegate = delegate
         settingsWindow = window

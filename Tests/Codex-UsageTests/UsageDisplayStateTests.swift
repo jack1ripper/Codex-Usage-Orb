@@ -34,4 +34,16 @@ final class UsageDisplayStateTests: XCTestCase {
             fetchedAt: Date(timeIntervalSince1970: 1_000)
         )
     }
+
+    func testIncompatibleResponsePreservesSnapshotAsStale() {
+        let snapshot = makeSnapshot()
+
+        XCTAssertEqual(
+            UsageDisplayState.resolve(
+                snapshot: snapshot,
+                error: .incompatibleResponse("missing windows")
+            ),
+            .data(snapshot, isStale: true)
+        )
+    }
 }

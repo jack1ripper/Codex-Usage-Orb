@@ -12,6 +12,8 @@
   Shows both the 5-hour and weekly limits, progress, and reset times at once.
 - 可选置顶的双行桌面悬浮面板。  
   Optional always-on-top two-row desktop panel.
+- 点击悬浮面板左侧 Logo 可立即刷新，悬停与刷新过程均有状态反馈。
+  Click the floating panel logo to refresh immediately, with hover and loading feedback.
 - 可拖拽桌面悬浮面板调整位置，位置会自动记忆。  
   Drag the desktop panel to reposition it; position is remembered.
 - 每 5 分钟自动刷新（可在设置中调整）。  
@@ -20,6 +22,8 @@
   Right-click the menu bar logo to show/hide the desktop panel, refresh, open settings, or quit.
 - 支持开机自启。  
   Optional launch at login.
+- 设置修改会即时保存，无需额外确认。
+  Settings are saved immediately without an extra confirmation step.
 
 ## 系统要求 / Requirements
 

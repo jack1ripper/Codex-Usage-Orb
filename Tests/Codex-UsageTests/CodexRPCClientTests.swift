@@ -100,6 +100,108 @@ final class CodexRPCClientTests: XCTestCase {
         }
     }
 
+    func testParsesCurrentCamelCaseResponseWithUnknownFields() throws {
+        let json = """
+        {
+          "id": 1,
+          "result": {
+            "rateLimits": {
+              "limitId": "codex",
+              "planType": "plus",
+              "primary": {
+                "usedPercent": 12,
+                "windowDurationMins": 300,
+                "resetsAt": 1752158400,
+                "futureField": true
+              },
+              "secondary": {
+                "usedPercent": 34,
+                "windowDurationMins": 10080,
+                "resetsAt": 1752441600
+              }
+            },
+            "futureTopLevelField": { "enabled": true }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try client.parseRateLimitsResponse(json)
+
+        XCTAssertEqual(snapshot.primary.usedPercent, 12)
+        XCTAssertEqual(snapshot.secondary.usedPercent, 34)
+    }
+
+    func testFallsBackToCodexMultiBucketResponse() throws {
+        let json = """
+        {
+          "id": 1,
+          "result": {
+            "rateLimitsByLimitId": {
+              "other": {
+                "primary": { "usedPercent": 90 }
+              },
+              "codex": {
+                "primary": {
+                  "usedPercent": 21,
+                  "windowDurationMins": 300,
+                  "resetsAt": 1752158400
+                },
+                "secondary": {
+                  "usedPercent": 43,
+                  "windowDurationMins": 10080,
+                  "resetsAt": 1752441600
+                }
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try client.parseRateLimitsResponse(json)
+
+        XCTAssertEqual(snapshot.primary.usedPercent, 21)
+        XCTAssertEqual(snapshot.secondary.usedPercent, 43)
+    }
+
+    func testFallsBackToFirstCompleteMultiBucketResponse() throws {
+        let json = """
+        {
+          "id": 1,
+          "result": {
+            "rateLimitsByLimitId": {
+              "incomplete": {
+                "primary": { "usedPercent": 90 }
+              },
+              "workspace": {
+                "primary": { "usedPercent": 31 },
+                "secondary": { "usedPercent": 52 }
+              }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try client.parseRateLimitsResponse(json)
+
+        XCTAssertEqual(snapshot.primary.usedPercent, 31)
+        XCTAssertEqual(snapshot.secondary.usedPercent, 52)
+    }
+
+    func testRejectsIncompleteRateLimitWindowsInsteadOfShowingFullRemainingQuota() {
+        let json = """
+        {
+          "id": 1,
+          "result": {
+            "rateLimits": {
+              "primary": { "usedPercent": 20 }
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertThrowsError(try client.parseRateLimitsResponse(json))
+    }
+
     // MARK: - extractResponseLine
 
     func testExtractResponseLineFindsMatchingId() throws {

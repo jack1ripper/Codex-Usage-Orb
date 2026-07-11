@@ -51,21 +51,11 @@ struct DefaultCodexCLIExecutor: CodexCLIExecutor {
         return validatedOverridePath(override)
     }
 
-    private func validatedOverridePath(_ path: String) -> String? {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("/"),
-              (trimmed as NSString).lastPathComponent == "codex",
-              trimmed.rangeOfCharacter(from: .controlCharacters) == nil else {
+    func validatedOverridePath(_ path: String) -> String? {
+        guard case .valid(let validPath) = CodexCLIPathStatus.validateExplicitPath(path) else {
             return nil
         }
-
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDir),
-              !isDir.boolValue,
-              FileManager.default.isExecutableFile(atPath: trimmed) else {
-            return nil
-        }
-        return trimmed
+        return validPath
     }
 
     private func resolveCommonInstallLocation() -> String? {
@@ -122,8 +112,29 @@ struct RPCRateLimitsResponse: Codable {
     struct RateLimits: Codable {
         let primary: RateLimitWindow?
         let secondary: RateLimitWindow?
+
+        var isComplete: Bool {
+            primary != nil && secondary != nil
+        }
     }
-    let rateLimits: RateLimits
+    let rateLimits: RateLimits?
+    let rateLimitsByLimitId: [String: RateLimits]?
+
+    func bestCompleteRateLimits() -> RateLimits? {
+        if let rateLimits, rateLimits.isComplete {
+            return rateLimits
+        }
+
+        if let codex = rateLimitsByLimitId?["codex"], codex.isComplete {
+            return codex
+        }
+
+        return rateLimitsByLimitId?
+            .sorted(by: { $0.key < $1.key })
+            .lazy
+            .map(\.value)
+            .first(where: \.isComplete)
+    }
 }
 
 protocol CodexRPCClientProtocol: Sendable {
@@ -211,16 +222,23 @@ actor CodexRPCClient: CodexRPCClientProtocol {
         guard let result = decoded.result else {
             throw UsageError.rpcFailed("Missing result")
         }
+        guard let rateLimits = result.bestCompleteRateLimits(),
+              let primary = rateLimits.primary,
+              let secondary = rateLimits.secondary else {
+            throw UsageError.incompatibleResponse(
+                "The Codex CLI response did not include complete primary and secondary rate-limit windows."
+            )
+        }
         return UsageSnapshot(
             primary: UsageWindow(
-                usedPercent: result.rateLimits.primary?.usedPercent ?? 0,
-                windowMinutes: result.rateLimits.primary?.windowDurationMins,
-                resetsAt: result.rateLimits.primary?.resetsAt
+                usedPercent: primary.usedPercent,
+                windowMinutes: primary.windowDurationMins,
+                resetsAt: primary.resetsAt
             ),
             secondary: UsageWindow(
-                usedPercent: result.rateLimits.secondary?.usedPercent ?? 0,
-                windowMinutes: result.rateLimits.secondary?.windowDurationMins,
-                resetsAt: result.rateLimits.secondary?.resetsAt
+                usedPercent: secondary.usedPercent,
+                windowMinutes: secondary.windowDurationMins,
+                resetsAt: secondary.resetsAt
             ),
             fetchedAt: Date()
         )

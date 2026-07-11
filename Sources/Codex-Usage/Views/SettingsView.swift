@@ -4,8 +4,6 @@ import ServiceManagement
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
-    let onSave: () -> Void
-
     @AppStorage("refreshInterval") private var refreshInterval: Double = 300
     @AppStorage("codexCLIPath") private var codexCLIPath: String = ""
     @AppStorage("floatingBallSize") private var panelSizeRaw: String = FloatingPanelSize.standard.rawValue
@@ -22,7 +20,20 @@ struct SettingsView: View {
         )
     }
 
+    private var cliPathStatus: CodexCLIPathStatus {
+        let configuredPath = codexCLIPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        let autoDetectedPath = configuredPath.isEmpty
+            ? DefaultCodexCLIExecutor().resolveCodexExecutable()
+            : nil
+        return CodexCLIPathStatus.resolve(
+            configuredPath: configuredPath,
+            autoDetectedPath: autoDetectedPath
+        )
+    }
+
     var body: some View {
+        let pathStatus = cliPathStatus
+
         Form {
             Section {
                 Picker("自动刷新间隔", selection: refreshIntervalBinding) {
@@ -45,18 +56,32 @@ struct SettingsView: View {
 
             Section {
                 HStack(spacing: 8) {
-                    TextField("/usr/local/bin/codex", text: $codexCLIPath)
+                    TextField(
+                        "",
+                        text: $codexCLIPath,
+                        prompt: Text("/usr/local/bin/codex")
+                    )
+                        .labelsHidden()
                         .textFieldStyle(.roundedBorder)
+                        .layoutPriority(1)
 
                     Button("浏览…") {
                         browseForCodexCLI()
                     }
                     .controlSize(.regular)
+                    .fixedSize()
                 }
 
-                Text("指定 Codex CLI 的安装路径，留空则自动检测")
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: pathStatus.systemImageName)
+                        .accessibilityHidden(true)
+
+                    Text(pathStatus.message)
+                        .textSelection(.enabled)
+                }
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(pathStatusColor(for: pathStatus))
+                    .accessibilityElement(children: .combine)
             } header: {
                 Text("Codex CLI 路径")
                     .font(.headline)
@@ -102,22 +127,9 @@ struct SettingsView: View {
                     .textCase(nil)
             }
 
-            Section {
-                Button {
-                    applySettings()
-                    onSave()
-                } label: {
-                    Text("保存设置")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-            }
-            .listRowBackground(Color.clear)
         }
         .formStyle(.grouped)
-        .frame(minWidth: 320, idealWidth: 360, maxWidth: 400)
+        .frame(minWidth: 400, idealWidth: 420, maxWidth: 440)
         .padding()
         .alert("无法设置开机启动", isPresented: $showLaunchLoginError) {
             Button("确定", role: .cancel) { }
@@ -141,15 +153,8 @@ struct SettingsView: View {
         )
     }
 
-    private func applySettings() {
-        // Ensure the stored interval is clamped.
-        refreshInterval = min(3600, max(60, refreshInterval))
-
-        // Notify the refresh service to pick up the new interval.
-        NotificationCenter.default.post(
-            name: UserDefaults.didChangeNotification,
-            object: UserDefaults.standard
-        )
+    private func pathStatusColor(for status: CodexCLIPathStatus) -> Color {
+        status.isError ? .red : Color(nsColor: .secondaryLabelColor)
     }
 
     private func intervalLabel(for seconds: Double) -> String {
@@ -174,6 +179,6 @@ struct SettingsView: View {
 
 #if DEBUG
 #Preview {
-    SettingsView(onSave: {})
+    SettingsView()
 }
 #endif

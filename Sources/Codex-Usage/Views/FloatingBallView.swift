@@ -10,6 +10,7 @@ struct FloatingBallView: View {
     let onQuit: () -> Void
 
     @AppStorage("floatingBallSize") private var panelSizeRaw = FloatingPanelSize.standard.rawValue
+    @State private var isRefreshRailHovering = false
 
     private var panelSize: FloatingPanelSize {
         FloatingPanelSize(rawValue: panelSizeRaw) ?? .standard
@@ -21,9 +22,14 @@ struct FloatingBallView: View {
         UsageDisplayState.resolve(snapshot: service.snapshot, error: service.error)
     }
 
+    private var isDataStale: Bool {
+        if case .data(_, let isStale) = state { return isStale }
+        return false
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            logoRail
+            refreshRail
 
             Divider()
                 .padding(.vertical, 9)
@@ -72,20 +78,55 @@ struct FloatingBallView: View {
         }
     }
 
-    private var logoRail: some View {
-        ZStack(alignment: .topTrailing) {
-            CodexUsageLogoView(pointSize: panelSize == .standard ? 21 : 19)
+    private var refreshVisualState: FloatingRefreshVisualState {
+        FloatingRefreshVisualState.resolve(
+            isLoading: service.isLoading,
+            isHovering: isRefreshRailHovering
+        )
+    }
 
-            if case .data(_, let isStale) = state, isStale {
-                Circle()
-                    .fill(Color.orange)
-                    .frame(width: 6, height: 6)
-                    .offset(x: 3, y: -3)
-                    .accessibilityLabel("数据可能已过期")
+    private var refreshRail: some View {
+        Button(action: onRefresh) {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    switch refreshVisualState {
+                    case .logo:
+                        CodexUsageLogoView(pointSize: panelSize == .standard ? 21 : 19)
+                    case .refresh:
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    case .loading:
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .frame(width: 22, height: 22)
+
+                if case .data(_, let isStale) = state, isStale {
+                    Circle()
+                        .fill(Color.orange)
+                        .frame(width: 6, height: 6)
+                        .offset(x: 3, y: -3)
+                        .accessibilityHidden(true)
+                }
             }
+            .frame(width: 28)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
-        .frame(width: 28)
-        .frame(maxHeight: .infinity)
+        .buttonStyle(.plain)
+        .disabled(service.isLoading)
+        .onHover { isRefreshRailHovering = $0 }
+        .help(
+            service.isLoading
+                ? "正在刷新用量"
+                : (isDataStale ? "数据可能已过期，点击刷新" : "刷新用量")
+        )
+        .accessibilityLabel(service.isLoading ? "正在刷新 Codex 用量" : "刷新 Codex 用量")
+        .accessibilityValue(isDataStale ? "数据可能已过期" : "数据为最新")
+        .accessibilityHint("获取最新的 5 小时和每周剩余额度")
+        .animation(.easeOut(duration: 0.12), value: refreshVisualState)
     }
 
     @ViewBuilder
@@ -102,13 +143,14 @@ struct FloatingBallView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         case .error(let error):
+            let presentation = UsageErrorPresentation(error: error)
             HStack(spacing: 8) {
-                Image(systemName: errorIcon(for: error))
+                Image(systemName: presentation.systemImageName)
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(.orange)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(errorTitle(for: error))
+                    Text(presentation.title)
                         .font(.system(size: 12, weight: .semibold))
                     Text("点击菜单栏图标查看详情")
                         .font(.system(size: 10))
@@ -142,27 +184,6 @@ struct FloatingBallView: View {
         }
     }
 
-    private func errorIcon(for error: UsageError) -> String {
-        switch error {
-        case .cliNotFound:
-            return "terminal"
-        case .notAuthenticated:
-            return "person.crop.circle.badge.xmark"
-        case .rpcFailed, .decodeFailed:
-            return "exclamationmark.triangle"
-        }
-    }
-
-    private func errorTitle(for error: UsageError) -> String {
-        switch error {
-        case .cliNotFound:
-            return "未找到 Codex CLI"
-        case .notAuthenticated:
-            return "Codex CLI 尚未登录"
-        case .rpcFailed, .decodeFailed:
-            return "暂时无法获取用量"
-        }
-    }
 }
 
 #if DEBUG
