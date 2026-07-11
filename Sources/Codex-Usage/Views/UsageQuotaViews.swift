@@ -115,7 +115,10 @@ struct UsageQuotaRow: View {
                 .font(.system(size: 15, weight: .semibold))
                 .monospacedDigit()
                 .foregroundStyle(.primary)
-                .frame(width: 38, alignment: .leading)
+                .frame(
+                    width: UsageQuotaRowLayout.compactPercentWidth,
+                    alignment: .leading
+                )
 
             UsageProgressBar(
                 ratio: presentation.remainingRatio,

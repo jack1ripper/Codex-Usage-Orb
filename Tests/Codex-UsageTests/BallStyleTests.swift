@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import Codex_Usage
 
@@ -28,6 +29,18 @@ final class BallStyleTests: XCTestCase {
         XCTAssertEqual(UsageProgressLayout.fillWidth(totalWidth: 100, ratio: -0.5), 0)
         XCTAssertEqual(UsageProgressLayout.fillWidth(totalWidth: 100, ratio: 0.42), 42)
         XCTAssertEqual(UsageProgressLayout.fillWidth(totalWidth: 100, ratio: 1.5), 100)
+    }
+
+    func testCompactPercentageColumnFitsOneHundredPercent() {
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 15, weight: .semibold)
+        let requiredWidth = ceil(("100%" as NSString).size(
+            withAttributes: [.font: font]
+        ).width)
+
+        XCTAssertGreaterThanOrEqual(
+            UsageQuotaRowLayout.compactPercentWidth,
+            requiredWidth
+        )
     }
 
     func testFloatingPanelLayoutAddsShadowInsetsAndKeepsTopEdge() {

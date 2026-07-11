@@ -49,6 +49,10 @@ enum UsageProgressLayout {
     }
 }
 
+enum UsageQuotaRowLayout {
+    static let compactPercentWidth: CGFloat = 46
+}
+
 enum FloatingPanelAppearance {
     static let cornerRadius: CGFloat = 18
     static let shadowOpacity = 0.12
