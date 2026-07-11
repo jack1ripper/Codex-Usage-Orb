@@ -4,19 +4,18 @@ protocol CodexCLIExecutor: Sendable {
     func execute() throws -> Process
     var isInstalled: Bool { get }
 }
-
 struct DefaultCodexCLIExecutor: CodexCLIExecutor {
     func execute() throws -> Process {
         let process = Process()
 
         if let executablePath = resolveCodexExecutable() {
             process.executableURL = URL(fileURLWithPath: executablePath)
-            process.arguments = ["-s", "read-only", "-a", "untrusted", "app-server"]
+            process.arguments = ["-s", "read-only", "-a", "untrusted", "app-server", "--stdio"]
         } else {
             // Fall back to PATH resolution; `CodexRPCClient` will report
             // `cliNotFound` via `isInstalled` if this cannot be resolved.
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = ["codex", "-s", "read-only", "-a", "untrusted", "app-server"]
+            process.arguments = ["codex", "-s", "read-only", "-a", "untrusted", "app-server", "--stdio"]
         }
 
         return process
@@ -62,7 +61,8 @@ struct DefaultCodexCLIExecutor: CodexCLIExecutor {
 
         var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDir),
-              !isDir.boolValue else {
+              !isDir.boolValue,
+              FileManager.default.isExecutableFile(atPath: trimmed) else {
             return nil
         }
         return trimmed
@@ -70,11 +70,11 @@ struct DefaultCodexCLIExecutor: CodexCLIExecutor {
 
     private func resolveCommonInstallLocation() -> String? {
         let candidates = [
+            NSString(string: "~/.local/bin/codex").expandingTildeInPath,
             "/opt/homebrew/bin/codex",
             "/usr/local/bin/codex",
-            "/Applications/ChatGPT.app/Contents/Resources/codex",
-            NSString(string: "~/.local/bin/codex").expandingTildeInPath,
             "/usr/bin/codex",
+            "/Applications/ChatGPT.app/Contents/Resources/codex",
         ]
         return candidates.first(where: fileExistsAtPath)
     }
@@ -99,7 +99,7 @@ struct DefaultCodexCLIExecutor: CodexCLIExecutor {
     }
 
     private func fileExistsAtPath(_ path: String) -> Bool {
-        FileManager.default.fileExists(atPath: path)
+        FileManager.default.fileExists(atPath: path) && FileManager.default.isExecutableFile(atPath: path)
     }
 }
 
@@ -120,8 +120,8 @@ struct RPCRateLimitsResponse: Codable {
         let resetsAt: Date?
     }
     struct RateLimits: Codable {
-        let primary: RateLimitWindow
-        let secondary: RateLimitWindow
+        let primary: RateLimitWindow?
+        let secondary: RateLimitWindow?
     }
     let rateLimits: RateLimits
 }
@@ -132,7 +132,6 @@ protocol CodexRPCClientProtocol: Sendable {
 
 actor CodexRPCClient: CodexRPCClientProtocol {
     private let executor: CodexCLIExecutor
-    private var currentProcess: Process?
 
     private let decoder: JSONDecoder = {
         let d = JSONDecoder()
@@ -158,74 +157,45 @@ actor CodexRPCClient: CodexRPCClientProtocol {
         process.standardOutput = stdout
         process.standardError = stderr
 
-        currentProcess = process
+        drainStderr(stderr)
+        let lines = lineStream(from: stdout)
+
         defer {
             if process.isRunning {
                 process.terminate()
             }
-            currentProcess = nil
         }
 
         try process.run()
 
-        let initializeRequest: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": 0,
-            "method": "initialize",
-            "params": [
-                "clientInfo": [
-                    "name": "Codex-Usage",
-                    "version": "1.0.0"
-                ]
-            ]
-        ]
+        _ = try await request(
+            id: 0,
+            method: "initialize",
+            params: ["clientInfo": ["name": "Codex-Usage", "version": "1.0.0"]],
+            via: stdin,
+            from: lines,
+            timeout: 8
+        )
 
-        let initializedNotification: [String: Any] = [
-            "jsonrpc": "2.0",
-            "method": "initialized"
-        ]
+        try sendNotification(method: "initialized", via: stdin)
 
-        let rateLimitsRequest: [String: Any] = [
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "account/rateLimits/read"
-        ]
+        let responseLine = try await request(
+            id: 1,
+            method: "account/rateLimits/read",
+            params: nil,
+            via: stdin,
+            from: lines,
+            timeout: 8
+        )
 
-        for request in [initializeRequest, initializedNotification, rateLimitsRequest] {
-            let payload = try JSONSerialization.data(withJSONObject: request, options: [])
-            stdin.fileHandleForWriting.write(payload)
-            stdin.fileHandleForWriting.write(Data("\n".utf8))
-        }
-        stdin.fileHandleForWriting.closeFile()
-
-        let stdoutData: Data
-        do {
-            stdoutData = try await readAllData(from: stdout, timeout: 8)
-        } catch {
+        if process.isRunning {
             process.terminate()
-            throw error
-        }
-
-        process.waitUntilExit()
-
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-        if process.terminationStatus != 0 {
-            let errorText = String(data: stderrData, encoding: .utf8) ?? ""
-            let lowercased = errorText.lowercased()
-            if lowercased.contains("not authenticated") || lowercased.contains("login") {
-                throw UsageError.notAuthenticated
-            }
-            throw UsageError.rpcFailed(
-                errorText.isEmpty ? "Process exited with \(process.terminationStatus)" : errorText
-            )
-        }
-
-        guard let responseLine = extractResponseLine(for: 1, from: stdoutData) else {
-            throw UsageError.rpcFailed("Missing rate limits response")
         }
 
         return try parseRateLimitsResponse(responseLine)
     }
+
+    // MARK: - Response parsing
 
     nonisolated func parseRateLimitsResponse(_ data: Data) throws -> UsageSnapshot {
         let decoded: RPCResponse
@@ -243,14 +213,14 @@ actor CodexRPCClient: CodexRPCClientProtocol {
         }
         return UsageSnapshot(
             primary: UsageWindow(
-                usedPercent: result.rateLimits.primary.usedPercent,
-                windowMinutes: result.rateLimits.primary.windowDurationMins,
-                resetsAt: result.rateLimits.primary.resetsAt
+                usedPercent: result.rateLimits.primary?.usedPercent ?? 0,
+                windowMinutes: result.rateLimits.primary?.windowDurationMins,
+                resetsAt: result.rateLimits.primary?.resetsAt
             ),
             secondary: UsageWindow(
-                usedPercent: result.rateLimits.secondary.usedPercent,
-                windowMinutes: result.rateLimits.secondary.windowDurationMins,
-                resetsAt: result.rateLimits.secondary.resetsAt
+                usedPercent: result.rateLimits.secondary?.usedPercent ?? 0,
+                windowMinutes: result.rateLimits.secondary?.windowDurationMins,
+                resetsAt: result.rateLimits.secondary?.resetsAt
             ),
             fetchedAt: Date()
         )
@@ -274,14 +244,75 @@ actor CodexRPCClient: CodexRPCClientProtocol {
         return nil
     }
 
-    private func readAllData(from pipe: Pipe, timeout: TimeInterval) async throws -> Data {
-        try await withTimeout(seconds: timeout) {
-            var data = Data()
-            for try await byte in pipe.fileHandleForReading.bytes {
-                data.append(byte)
+    // MARK: - JSON-RPC wiring
+
+    private func request(
+        id: Int,
+        method: String,
+        params: [String: Any]?,
+        via stdin: Pipe,
+        from lines: AsyncStream<Data>,
+        timeout: TimeInterval
+    ) async throws -> Data {
+        try sendRequest(id: id, method: method, params: params, via: stdin)
+
+        return try await withTimeout(seconds: timeout) {
+            for await line in lines {
+                guard let json = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
+                    continue
+                }
+                // Skip server-initiated notifications that have no id.
+                if json["id"] == nil, json["method"] != nil {
+                    continue
+                }
+                guard let lineId = json["id"] as? Int, lineId == id else {
+                    continue
+                }
+                if let error = json["error"] as? [String: Any],
+                   let message = error["message"] as? String {
+                    let lowercased = message.localizedLowercase
+                    if lowercased.contains("not authenticated") ||
+                        lowercased.contains("unauthenticated") ||
+                        lowercased.contains("unauthorized") ||
+                        lowercased.contains("login") {
+                        throw UsageError.notAuthenticated
+                    }
+                    throw UsageError.rpcFailed(message)
+                }
+                return line
             }
-            return data
+            throw UsageError.rpcFailed("Missing rate limits response")
         }
+    }
+
+    private func sendRequest(
+        id: Int,
+        method: String,
+        params: [String: Any]?,
+        via stdin: Pipe
+    ) throws {
+        var payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+        ]
+        payload["params"] = params ?? [:]
+        try sendPayload(payload, via: stdin)
+    }
+
+    private func sendNotification(method: String, via stdin: Pipe) throws {
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": [:],
+        ]
+        try sendPayload(payload, via: stdin)
+    }
+
+    private func sendPayload(_ payload: [String: Any], via stdin: Pipe) throws {
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [])
+        stdin.fileHandleForWriting.write(data)
+        stdin.fileHandleForWriting.write(Data("\n".utf8))
     }
 
     private func withTimeout<T: Sendable>(
@@ -300,5 +331,62 @@ actor CodexRPCClient: CodexRPCClientProtocol {
             group.cancelAll()
             return result
         }
+    }
+
+    // MARK: - Stderr drain
+
+    private nonisolated func drainStderr(_ pipe: Pipe) {
+        let handle = pipe.fileHandleForReading
+        handle.readabilityHandler = { handle in
+            // Drain stderr so the child process never blocks on a full pipe.
+            _ = handle.availableData
+            if handle.availableData.isEmpty {
+                handle.readabilityHandler = nil
+            }
+        }
+    }
+
+    // MARK: - Stdout line stream
+
+    private nonisolated func lineStream(from pipe: Pipe) -> AsyncStream<Data> {
+        AsyncStream { continuation in
+            let buffer = LineBuffer()
+            let handle = pipe.fileHandleForReading
+            handle.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    continuation.finish()
+                    return
+                }
+                let lines = buffer.appendAndDrainLines(data)
+                for line in lines {
+                    continuation.yield(line)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Line buffer
+
+private final class LineBuffer: @unchecked Sendable {
+    private var buffer = Data()
+    private let lock = NSLock()
+
+    func appendAndDrainLines(_ data: Data) -> [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        buffer.append(data)
+        var out: [Data] = []
+        while let newline = buffer.firstIndex(of: 0x0A) {
+            let lineData = Data(buffer[..<newline])
+            buffer.removeSubrange(...newline)
+            if !lineData.isEmpty {
+                out.append(lineData)
+            }
+        }
+        return out
     }
 }

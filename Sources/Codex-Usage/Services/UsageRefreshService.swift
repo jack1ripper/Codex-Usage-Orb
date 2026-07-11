@@ -6,12 +6,12 @@ final class UsageRefreshService: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
     @Published private(set) var error: UsageError?
     @Published private(set) var isLoading: Bool = false
-    
+
     private let rpcClient: CodexRPCClientProtocol
     private let userDefaults: UserDefaults
     private var timer: Timer?
     private var refreshInterval: TimeInterval
-    
+
     init(rpcClient: CodexRPCClientProtocol = CodexRPCClient(), userDefaults: UserDefaults = .standard) {
         self.rpcClient = rpcClient
         self.userDefaults = userDefaults
@@ -22,7 +22,7 @@ final class UsageRefreshService: ObservableObject {
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
-    
+
     func start() {
         guard timer == nil else { return }
         Task {
@@ -34,12 +34,12 @@ final class UsageRefreshService: ObservableObject {
             }
         }
     }
-    
+
     func stop() {
         timer?.invalidate()
         timer = nil
     }
-    
+
     func refresh() async {
         guard !isLoading else { return }
         isLoading = true
@@ -64,9 +64,9 @@ final class UsageRefreshService: ObservableObject {
     internal var isTimerActive: Bool { timer != nil }
 
     private static func readRefreshInterval(from userDefaults: UserDefaults) -> TimeInterval {
-        guard userDefaults.object(forKey: "refreshInterval") != nil else { return 60 }
+        guard userDefaults.object(forKey: "refreshInterval") != nil else { return 300 }
         let value = userDefaults.double(forKey: "refreshInterval")
-        return min(300, max(10, value))
+        return min(3600, max(60, value))
     }
 
     private func observeRefreshIntervalChanges() {
@@ -98,9 +98,15 @@ final class UsageRefreshService: ObservableObject {
 
 #if DEBUG
 extension UsageRefreshService {
-    convenience init(previewSnapshot snapshot: UsageSnapshot) {
+    convenience init(
+        previewSnapshot snapshot: UsageSnapshot? = nil,
+        previewError error: UsageError? = nil,
+        previewIsLoading isLoading: Bool = false
+    ) {
         self.init()
         self.snapshot = snapshot
+        self.error = error
+        self.isLoading = isLoading
     }
 }
 #endif

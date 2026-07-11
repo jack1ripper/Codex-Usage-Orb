@@ -84,7 +84,7 @@ final class CodexRPCClientTests: XCTestCase {
           "result": {
             "rate_limits": {
               "primary": {
-                "used_percent": 20.0
+                "window_duration_mins": 300
               }
             }
           }

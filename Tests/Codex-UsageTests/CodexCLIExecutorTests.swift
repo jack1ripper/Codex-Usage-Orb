@@ -16,6 +16,7 @@ final class CodexCLIExecutorTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let path = directory.appendingPathComponent("codex").path
         FileManager.default.createFile(atPath: path, contents: Data("#!/bin/sh\n".utf8))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
         return path
     }
 
@@ -123,7 +124,7 @@ final class CodexCLIExecutorTests: XCTestCase {
         let process = try executor.execute()
 
         XCTAssertEqual(process.executableURL?.path, path)
-        XCTAssertEqual(process.arguments, ["-s", "read-only", "-a", "untrusted", "app-server"])
+        XCTAssertEqual(process.arguments, ["-s", "read-only", "-a", "untrusted", "app-server", "--stdio"])
     }
 
     func testExecuteFallsBackToEnvWhenNotResolved() throws {
@@ -136,12 +137,12 @@ final class CodexCLIExecutorTests: XCTestCase {
             // No codex installation was found; the executor should fall back to
             // invoking `codex` through /usr/bin/env.
             XCTAssertEqual(process.executableURL?.path, "/usr/bin/env")
-            XCTAssertEqual(process.arguments, ["codex", "-s", "read-only", "-a", "untrusted", "app-server"])
+            XCTAssertEqual(process.arguments, ["codex", "-s", "read-only", "-a", "untrusted", "app-server", "--stdio"])
         } else {
             // A real codex installation is present on this machine, so the
             // resolved executable should be used directly.
             XCTAssertNotEqual(process.executableURL?.path, "/usr/bin/env")
-            XCTAssertEqual(process.arguments, ["-s", "read-only", "-a", "untrusted", "app-server"])
+            XCTAssertEqual(process.arguments, ["-s", "read-only", "-a", "untrusted", "app-server", "--stdio"])
         }
     }
 }

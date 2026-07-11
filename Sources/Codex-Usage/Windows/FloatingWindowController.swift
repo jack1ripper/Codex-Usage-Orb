@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 @MainActor
 final class FloatingWindowController: NSObject, NSWindowDelegate {
@@ -11,26 +11,42 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
     init(service: UsageRefreshService) {
         self.service = service
         super.init()
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(userDefaultsDidChange),
+            name: UserDefaults.didChangeNotification,
+            object: nil
+        )
     }
 
     deinit {
-        // `deinit` is non-isolated, so stop the service asynchronously on the
-        // main actor. Callers should close the window explicitly via `close()`
-        // to ensure the timer is stopped synchronously.
-        let service = self.service
-        Task { @MainActor in
-            service.stop()
-        }
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    var isFloatingPanelVisible: Bool {
+        window != nil
+    }
+
+    private var currentPanelSize: FloatingPanelSize {
+        let raw = UserDefaults.standard.string(forKey: "floatingBallSize")
+            ?? FloatingPanelSize.standard.rawValue
+        return FloatingPanelSize(rawValue: raw) ?? .standard
+    }
+
+    private var currentWindowSize: CGSize {
+        FloatingPanelLayout.windowSize(for: currentPanelSize.cardSize)
     }
 
     func show() {
-        if let window = window {
+        if let window {
             window.orderFrontRegardless()
             return
         }
 
+        let size = currentWindowSize
         let panel = NSPanel(
-            contentRect: NSRect(x: 100, y: 100, width: 140, height: 140),
+            contentRect: NSRect(x: 100, y: 100, width: size.width, height: size.height),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -44,6 +60,8 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
         panel.ignoresMouseEvents = false
         panel.isMovableByWindowBackground = true
         panel.hidesOnDeactivate = false
+        panel.animationBehavior = .utilityWindow
+        panel.appearance = NSAppearance(named: .aqua)
         panel.delegate = self
 
         let contentView = FloatingBallView(
@@ -54,56 +72,110 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
             onSettings: { [weak self] in
                 self?.showSettings()
             },
+            onHide: { [weak self] in
+                self?.setFloatingPanelVisible(false)
+            },
             onQuit: {
                 NSApplication.shared.terminate(nil)
             }
         )
-        panel.contentView = NSHostingView(rootView: contentView)
+        let hostingView = NSHostingView(rootView: contentView)
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hostingView
 
         restorePosition(for: panel)
 
-        self.window = panel
+        window = panel
         panel.orderFrontRegardless()
-        service.start()
     }
 
-    /// Brings the floating panel to the front, recreating it if it was closed.
+    func setFloatingPanelVisible(_ visible: Bool) {
+        UserDefaults.standard.set(visible, forKey: FloatingPanelPreference.visibilityKey)
+
+        if visible {
+            show()
+        } else {
+            close()
+        }
+    }
+
+    func applyVisibilityPreference() {
+        if FloatingPanelPreference.isEnabled() {
+            show()
+        } else {
+            close()
+        }
+    }
+
     func bringToFront() {
-        show()
+        setFloatingPanelVisible(true)
     }
 
-    /// Triggers a manual refresh of the usage data.
     func refresh() {
         Task { await service.refresh() }
     }
 
-    /// Closes the floating panel and stops the refresh service.
     func close() {
         window?.close()
+    }
+
+    @objc private func userDefaultsDidChange(_ notification: Notification) {
+        guard FloatingPanelPreference.isEnabled() else {
+            close()
+            return
+        }
+
+        guard let window else {
+            show()
+            return
+        }
+
+        let newSize = currentWindowSize
+        guard window.frame.size != newSize else { return }
+
+        let resized = FloatingPanelLayout.resizedFrameKeepingTopEdge(
+            window.frame,
+            newSize: newSize
+        )
+        let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? resized
+        window.setFrame(clampedFrame(resized, to: visibleFrame), display: true, animate: true)
     }
 
     // MARK: - Settings window
 
     func showSettings() {
-        if let settingsWindow = settingsWindow {
+        if let settingsWindow {
+            NSApplication.shared.activate(ignoringOtherApps: true)
             settingsWindow.makeKeyAndOrderFront(nil)
             return
         }
 
         let delegate = SettingsWindowDelegate(controller: self)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 200),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 400),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
-        window.title = "Settings"
-        window.contentView = NSHostingView(rootView: SettingsView())
+        window.title = "设置"
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = NSHostingView(rootView: SettingsView(onSave: { [weak self] in
+            self?.hideSettings()
+        }))
         window.center()
         window.delegate = delegate
         settingsWindow = window
         settingsWindowDelegate = delegate
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    fileprivate func settingsWindowShouldClose() {
+        // Hide instead of closing so the LSUIElement app is never left with
+        // zero windows, which can cause the system to terminate it.
+        settingsWindow?.orderOut(nil)
     }
 
     fileprivate func settingsWindowDidClose() {
@@ -111,10 +183,14 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
         settingsWindowDelegate = nil
     }
 
+    func hideSettings() {
+        settingsWindow?.orderOut(nil)
+    }
+
     // MARK: - NSWindowDelegate
 
     func windowDidMove(_ notification: Notification) {
-        guard let window = window,
+        guard let window,
               notification.object as? NSWindow == window else { return }
         savePosition(of: window)
     }
@@ -122,7 +198,6 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         guard let closingWindow = notification.object as? NSWindow,
               closingWindow == window else { return }
-        service.stop()
         window = nil
     }
 
@@ -143,22 +218,31 @@ final class FloatingWindowController: NSObject, NSWindowDelegate {
             y: savedY.map { CGFloat($0) } ?? defaultOrigin.y
         )
 
-        let screen = window.screen ?? NSScreen.main
-        let visibleFrame = screen?.visibleFrame ?? NSRect(origin: .zero, size: window.frame.size)
+        var frame = window.frame
+        frame.origin = savedOrigin
 
-        let clampedOrigin = NSPoint(
-            x: max(visibleFrame.minX, min(savedOrigin.x, visibleFrame.maxX - window.frame.width)),
-            y: max(visibleFrame.minY, min(savedOrigin.y, visibleFrame.maxY - window.frame.height))
+        let visibleFrame = FloatingPanelLayout.visibleFrame(
+            containing: savedOrigin,
+            candidates: NSScreen.screens.map(\.visibleFrame)
+        ) ?? NSScreen.main?.visibleFrame ?? frame
+
+        window.setFrame(clampedFrame(frame, to: visibleFrame), display: false)
+    }
+
+    private func clampedFrame(_ frame: CGRect, to visibleFrame: CGRect) -> CGRect {
+        var result = frame
+        result.origin.x = max(
+            visibleFrame.minX,
+            min(result.origin.x, visibleFrame.maxX - result.width)
         )
-
-        window.setFrameOrigin(clampedOrigin)
+        result.origin.y = max(
+            visibleFrame.minY,
+            min(result.origin.y, visibleFrame.maxY - result.height)
+        )
+        return result
     }
 }
 
-// MARK: - Settings window delegate
-
-/// A dedicated delegate for the Settings window so that its lifecycle is
-/// isolated from the main floating panel.
 @MainActor
 private final class SettingsWindowDelegate: NSObject, NSWindowDelegate {
     private weak var controller: FloatingWindowController?
@@ -166,6 +250,11 @@ private final class SettingsWindowDelegate: NSObject, NSWindowDelegate {
     init(controller: FloatingWindowController) {
         self.controller = controller
         super.init()
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        controller?.settingsWindowShouldClose()
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

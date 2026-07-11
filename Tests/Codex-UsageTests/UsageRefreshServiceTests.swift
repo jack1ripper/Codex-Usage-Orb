@@ -103,7 +103,7 @@ final class UsageRefreshServiceTests: XCTestCase {
         let mock = MockCodexRPCClient()
         await mock.setResult(.success(snapshot))
         let defaults = makeUserDefaults()
-        defaults.set(10.0, forKey: "refreshInterval")
+        defaults.set(60.0, forKey: "refreshInterval")
         let service = UsageRefreshService(rpcClient: mock, userDefaults: defaults)
 
         service.start()
@@ -132,25 +132,25 @@ final class UsageRefreshServiceTests: XCTestCase {
 
         let service = UsageRefreshService(userDefaults: defaults)
 
-        XCTAssertEqual(service.currentRefreshInterval, 60.0)
+        XCTAssertEqual(service.currentRefreshInterval, 300.0)
     }
 
     func testClampsRefreshIntervalBelowMinimum() {
         let defaults = makeUserDefaults()
-        defaults.set(5.0, forKey: "refreshInterval")
+        defaults.set(30.0, forKey: "refreshInterval")
 
         let service = UsageRefreshService(userDefaults: defaults)
 
-        XCTAssertEqual(service.currentRefreshInterval, 10.0)
+        XCTAssertEqual(service.currentRefreshInterval, 60.0)
     }
 
     func testClampsRefreshIntervalAboveMaximum() {
         let defaults = makeUserDefaults()
-        defaults.set(500.0, forKey: "refreshInterval")
+        defaults.set(5000.0, forKey: "refreshInterval")
 
         let service = UsageRefreshService(userDefaults: defaults)
 
-        XCTAssertEqual(service.currentRefreshInterval, 300.0)
+        XCTAssertEqual(service.currentRefreshInterval, 3600.0)
     }
 
     func testRecreatesTimerWhenRefreshIntervalChanges() {

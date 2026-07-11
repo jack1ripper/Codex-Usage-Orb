@@ -1,202 +1,175 @@
 import SwiftUI
-import Combine
 
+/// The optional always-on-top desktop summary. The historical type name is
+/// retained so existing controller wiring and previews keep their source ABI.
 struct FloatingBallView: View {
     @ObservedObject var service: UsageRefreshService
     let onRefresh: () -> Void
     let onSettings: () -> Void
+    let onHide: () -> Void
     let onQuit: () -> Void
 
-    @State private var now = Date()
-    private let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
+    @AppStorage("floatingBallSize") private var panelSizeRaw = FloatingPanelSize.standard.rawValue
 
-    private var snapshot: UsageSnapshot? { service.snapshot }
-    private var error: UsageError? { service.error }
-    private var primaryWindow: UsageWindow? { snapshot?.primary }
-    private var secondaryWindow: UsageWindow? { snapshot?.secondary }
-    private var isOffline: Bool { error != nil && snapshot != nil }
+    private var panelSize: FloatingPanelSize {
+        FloatingPanelSize(rawValue: panelSizeRaw) ?? .standard
+    }
+
+    private var cardSize: CGSize { panelSize.cardSize }
+
+    private var state: UsageDisplayState {
+        UsageDisplayState.resolve(snapshot: service.snapshot, error: service.error)
+    }
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(.ultraThinMaterial)
-                .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
+        HStack(spacing: 0) {
+            logoRail
 
-            VStack(spacing: 4) {
-                if snapshot == nil && error != nil {
-                    errorView(error!)
-                } else if snapshot != nil {
-                    usageView
-                } else {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                }
-            }
-            .frame(width: 120, height: 120)
-        }
-        .frame(width: 140, height: 140)
-        .contextMenu {
-            Button("Refresh") { onRefresh() }
-            Button("Settings") { onSettings() }
             Divider()
-            Button("Quit") { onQuit() }
+                .padding(.vertical, 9)
+
+            content
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
         }
-        .onReceive(timer) { _ in
-            now = Date()
-        }
-    }
-
-    private var usageView: some View {
-        ZStack {
-            ring(ratio: primaryWindow?.remainingRatio ?? 0, lineWidth: 10, radius: 58)
-            ring(ratio: secondaryWindow?.remainingRatio ?? 0, lineWidth: 8, radius: 44)
-
-            VStack(spacing: 2) {
-                Text(countdownText)
-                    .font(.system(size: 18, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-
-                Text("until reset")
-                    .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 12) {
-                    percentLabel(title: "5h", window: primaryWindow)
-                    percentLabel(title: "Wk", window: secondaryWindow)
-                }
-                .padding(.top, 2)
-            }
-
-            if isOffline {
-                VStack {
-                    Spacer()
-                    Text("Offline")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.gray.opacity(0.8))
-                        .clipShape(Capsule())
-                }
-                .frame(width: 100, height: 100)
-            }
-        }
-    }
-
-    private func ring(ratio: Double, lineWidth: CGFloat, radius: CGFloat) -> some View {
-        ZStack {
-            Circle()
-                .stroke(Color.white.opacity(0.15), lineWidth: lineWidth)
-                .frame(width: radius * 2, height: radius * 2)
-
-            Circle()
-                .trim(from: 0, to: ratio)
-                .stroke(
-                    progressColor(for: ratio),
-                    style: StrokeStyle(
-                        lineWidth: lineWidth,
-                        lineCap: .round,
-                        dash: isOffline ? [4, 4] : []
-                    )
+        .frame(width: cardSize.width, height: cardSize.height)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.white.opacity(0.54))
                 )
-                .frame(width: radius * 2, height: radius * 2)
-                .rotationEffect(.degrees(-90))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.black.opacity(0.10), lineWidth: 0.8)
+        )
+        .shadow(color: Color.black.opacity(0.16), radius: 12, x: 0, y: 6)
+        .padding(FloatingPanelLayout.shadowInset)
+        .background(Color.clear)
+        .preferredColorScheme(.light)
+        .contextMenu {
+            Button("刷新数据") { onRefresh() }
+            Button("打开设置") { onSettings() }
+            Button("隐藏悬浮窗") { onHide() }
+            Divider()
+            Button("退出应用") { onQuit() }
         }
     }
 
-    private func progressColor(for ratio: Double) -> Color {
-        if isOffline {
-            return .gray
+    private var logoRail: some View {
+        ZStack(alignment: .topTrailing) {
+            CodexUsageLogoView(pointSize: panelSize == .standard ? 21 : 19)
+
+            if case .data(_, let isStale) = state, isStale {
+                Circle()
+                    .fill(Color.orange)
+                    .frame(width: 6, height: 6)
+                    .offset(x: 3, y: -3)
+                    .accessibilityLabel("数据可能已过期")
+            }
         }
-        switch ratio {
-        case ..<0.1:
-            return .red
-        case 0.1..<0.3:
-            return .yellow
-        default:
-            return .cyan
+        .frame(width: 28)
+        .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch state {
+        case .loading:
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("正在获取用量…")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+        case .error(let error):
+            HStack(spacing: 8) {
+                Image(systemName: errorIcon(for: error))
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.orange)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(errorTitle(for: error))
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("点击菜单栏图标查看详情")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+
+        case .data(let snapshot, _):
+            VStack(spacing: 0) {
+                UsageQuotaRow(
+                    presentation: UsageQuotaPresentation(
+                        kind: .primary,
+                        window: snapshot.primary
+                    ),
+                    window: snapshot.primary,
+                    style: .compact
+                )
+
+                Divider()
+
+                UsageQuotaRow(
+                    presentation: UsageQuotaPresentation(
+                        kind: .weekly,
+                        window: snapshot.secondary
+                    ),
+                    window: snapshot.secondary,
+                    style: .compact
+                )
+            }
         }
     }
 
-    private var countdownText: String {
-        let candidates = [primaryWindow?.resetsAt, secondaryWindow?.resetsAt].compactMap { $0 }
-        guard let nearest = candidates.filter({ $0 > now }).min() else {
-            return "—"
-        }
-
-        let totalSeconds = nearest.timeIntervalSince(now)
-        let hours = Int(totalSeconds) / 3600
-        let minutes = (Int(totalSeconds) % 3600) / 60
-
-        if hours > 0 {
-            return "\(hours)h \(minutes)m"
-        } else {
-            return "\(minutes)m"
-        }
-    }
-
-    private func percentLabel(title: String, window: UsageWindow?) -> some View {
-        VStack(spacing: 0) {
-            Text(title)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white.opacity(0.7))
-
-            Text(window.map { "\(Int($0.remainingPercent))%" } ?? "—")
-                .font(.system(size: 10))
-                .foregroundColor(.white)
-        }
-    }
-
-    private func errorView(_ error: UsageError) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 24))
-                .foregroundColor(.yellow)
-
-            Text(errorMessage(for: error))
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 8)
-    }
-
-    private func errorMessage(for error: UsageError) -> String {
+    private func errorIcon(for error: UsageError) -> String {
         switch error {
         case .cliNotFound:
-            return "Install Codex CLI"
+            return "terminal"
         case .notAuthenticated:
-            return "Run `codex login`"
-        case .rpcFailed(let msg), .decodeFailed(let msg):
-            let maxLength = 40
-            if msg.count > maxLength {
-                return String(msg.prefix(maxLength)) + "…"
-            }
-            return msg
+            return "person.crop.circle.badge.xmark"
+        case .rpcFailed, .decodeFailed:
+            return "exclamationmark.triangle"
+        }
+    }
+
+    private func errorTitle(for error: UsageError) -> String {
+        switch error {
+        case .cliNotFound:
+            return "未找到 Codex CLI"
+        case .notAuthenticated:
+            return "Codex CLI 尚未登录"
+        case .rpcFailed, .decodeFailed:
+            return "暂时无法获取用量"
         }
     }
 }
 
 #if DEBUG
-#Preview {
+#Preview("Floating panel") {
     FloatingBallView(
         service: UsageRefreshService(previewSnapshot: UsageSnapshot(
             primary: UsageWindow(
-                usedPercent: 30,
+                usedPercent: 3,
                 windowMinutes: 300,
-                resetsAt: Date().addingTimeInterval(3600)
+                resetsAt: Date().addingTimeInterval(4 * 3600)
             ),
             secondary: UsageWindow(
-                usedPercent: 60,
-                windowMinutes: 10080,
-                resetsAt: Date().addingTimeInterval(86400)
+                usedPercent: 1,
+                windowMinutes: 10_080,
+                resetsAt: Date().addingTimeInterval(7 * 24 * 3600)
             ),
             fetchedAt: Date()
         )),
         onRefresh: {},
         onSettings: {},
+        onHide: {},
         onQuit: {}
     )
 }

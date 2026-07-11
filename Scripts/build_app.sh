@@ -4,14 +4,24 @@ set -e
 APP_NAME="Codex-Usage"
 BUILD_DIR=".build/release"
 APP_BUNDLE="$APP_NAME.app"
+RESOURCE_BUNDLE="$BUILD_DIR/Codex-Usage_Codex-Usage.bundle"
 
 swift build -c release
+
+if [ ! -d "$RESOURCE_BUNDLE" ]; then
+    echo "Required resource bundle not found: $RESOURCE_BUNDLE"
+    exit 1
+fi
 
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
 cp "$BUILD_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/"
+cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/Contents/Resources/"
+if [ -f "Sources/Codex-Usage/Resources/AppIcon.icns" ]; then
+    cp "Sources/Codex-Usage/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/"
+fi
 
 cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -36,6 +46,8 @@ cat > "$APP_BUNDLE/Contents/Info.plist" <<EOF
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
 EOF
